@@ -32,7 +32,7 @@ public abstract class CompostMixin {
         if (ITEM_TO_LEVEL_INCREASE_CHANCE.containsKey(itemStack.getItem())) {
             if (i < 8 && !world.isClient) {
                 boolean addToComposter = CompostMixin.addToComposter(state, world, pos, itemStack);
-                world.syncWorldEvent(1500, pos, addToComposter ? 1 : 0);
+                world.syncWorldEvent(100, pos, addToComposter ? 1 : 0);
                 if (!player.getAbilities().creativeMode) {
                     itemStack.decrement(1);
                 }
