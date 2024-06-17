@@ -8,8 +8,9 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.sound.SoundCategory;
 import net.minecraft.sound.SoundEvents;
-import net.minecraft.util.ActionResult;
+import net.minecraft.stat.Stats;
 import net.minecraft.util.Hand;
+import net.minecraft.util.ItemActionResult;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
@@ -25,19 +26,18 @@ import static net.minecraft.block.ComposterBlock.ITEM_TO_LEVEL_INCREASE_CHANCE;
 
 @Mixin(ComposterBlock.class)
 public abstract class CompostMixin {
-    @Inject(method = "onUse", at = @At("HEAD"), cancellable = true)
-    private void onUse(BlockState state, World world, BlockPos pos, PlayerEntity player, Hand hand, BlockHitResult hit, CallbackInfoReturnable<ActionResult> cir){
+    @Inject(method = "onUseWithItem", at = @At("HEAD"), cancellable = true)
+    private void onUseWithItem(ItemStack stack, BlockState state, World world, BlockPos pos, PlayerEntity player, Hand hand, BlockHitResult hit, CallbackInfoReturnable<ItemActionResult> cir){
         int i = state.get(LEVEL);
         ItemStack itemStack = player.getStackInHand(hand);
         if (ITEM_TO_LEVEL_INCREASE_CHANCE.containsKey(itemStack.getItem())) {
             if (i < 8 && !world.isClient) {
                 boolean addToComposter = CompostMixin.addToComposter(state, world, pos, itemStack);
                 world.syncWorldEvent(100, pos, addToComposter ? 1 : 0);
-                if (!player.getAbilities().creativeMode) {
-                    itemStack.decrement(1);
-                }
+                player.incrementStat(Stats.USED.getOrCreateStat(stack.getItem()));
+                stack.decrementUnlessCreative(1, player);
             }
-            cir.setReturnValue(ActionResult.SUCCESS);
+            cir.setReturnValue(ItemActionResult.success(world.isClient));
         } else if (i > 0) {
             if (!world.isClient) {
                 Vec3d vec3d = Vec3d.add(pos, 0.5, 1.01, 0.5).addRandom(world.random, 0.7f);
@@ -47,12 +47,11 @@ public abstract class CompostMixin {
             }
             world.setBlockState(pos, state.with(LEVEL, i - 1), 3);
             world.playSound(null, pos, SoundEvents.BLOCK_COMPOSTER_EMPTY, SoundCategory.BLOCKS, 1.0f, 1.0f);
-            cir.setReturnValue(ActionResult.SUCCESS);
+            cir.setReturnValue(ItemActionResult.success(world.isClient));
         } else {
-            cir.setReturnValue(ActionResult.FAIL);
+            cir.setReturnValue(ItemActionResult.FAIL);
         }
     }
-
     @Unique
     private static boolean addToComposter(BlockState state, WorldAccess world, BlockPos pos, ItemStack stack) {
         int j = state.get(LEVEL);
