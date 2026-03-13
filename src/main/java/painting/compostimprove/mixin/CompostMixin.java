@@ -64,7 +64,7 @@ public abstract class CompostMixin {
     @Inject(method = "getInventory", at = @At("HEAD"), cancellable = true)
     private void getInventory(BlockState state, WorldAccess world, BlockPos pos, CallbackInfoReturnable<SidedInventory> cir) {
         int level = state.get(LEVEL);
-        if (level > 0 && level < 8) {
+        if (level > 0) {
             cir.setReturnValue(new LayeredOutputInventory(state, world, pos));
         }
     }
@@ -133,12 +133,24 @@ public abstract class CompostMixin {
 
         @Override
         public boolean canInsert(int slot, ItemStack stack, Direction dir) {
-            return slot == 1 && dir == Direction.UP && this.getStack(1).isEmpty() && ITEM_TO_LEVEL_INCREASE_CHANCE.containsKey(stack.getItem());
+            BlockState currentState = getCurrentComposterState(this.world, this.pos, this.state);
+            return currentState != null
+                    && currentState.get(LEVEL) < 8
+                    && slot == 1
+                    && dir == Direction.UP
+                    && this.getStack(1).isEmpty()
+                    && ITEM_TO_LEVEL_INCREASE_CHANCE.containsKey(stack.getItem());
         }
 
         @Override
         public boolean canExtract(int slot, ItemStack stack, Direction dir) {
-            return slot == 0 && dir == Direction.DOWN && !this.getStack(0).isEmpty() && stack.isOf(Items.BONE_MEAL);
+            BlockState currentState = getCurrentComposterState(this.world, this.pos, this.state);
+            return currentState != null
+                    && currentState.get(LEVEL) > 0
+                    && slot == 0
+                    && dir == Direction.DOWN
+                    && !this.getStack(0).isEmpty()
+                    && stack.isOf(Items.BONE_MEAL);
         }
 
         @Override
