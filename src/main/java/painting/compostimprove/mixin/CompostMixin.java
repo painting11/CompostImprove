@@ -1,59 +1,66 @@
 package painting.compostimprove.mixin;
 
-import net.minecraft.block.BlockState;
-import net.minecraft.block.ComposterBlock;
-import net.minecraft.entity.ItemEntity;
-import net.minecraft.entity.Entity;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.inventory.SidedInventory;
-import net.minecraft.inventory.SimpleInventory;
-import net.minecraft.sound.SoundCategory;
-import net.minecraft.sound.SoundEvents;
-import net.minecraft.util.ItemActionResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.World;
-import net.minecraft.world.WorldAccess;
-import net.minecraft.world.event.GameEvent;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.SimpleContainer;
+import net.minecraft.world.WorldlyContainer;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.LevelAccessor;
+import net.minecraft.world.level.block.ComposterBlock;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.gameevent.GameEvent;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.Vec3;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.gen.Invoker;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
-import static net.minecraft.block.ComposterBlock.LEVEL;
-import static net.minecraft.block.ComposterBlock.ITEM_TO_LEVEL_INCREASE_CHANCE;
+import static net.minecraft.world.level.block.ComposterBlock.COMPOSTABLES;
+import static net.minecraft.world.level.block.ComposterBlock.LEVEL;
 
 @Mixin(ComposterBlock.class)
 public abstract class CompostMixin {
-    @Inject(method = "onUseWithItem", at = @At("HEAD"), cancellable = true)
-    private void onUseWithItem(ItemStack stack, BlockState state, World world, BlockPos pos, net.minecraft.entity.player.PlayerEntity player, net.minecraft.util.Hand hand, net.minecraft.util.hit.BlockHitResult hit, CallbackInfoReturnable<ItemActionResult> cir) {
-        int level = state.get(LEVEL);
+    @Inject(method = "useItemOn", at = @At("HEAD"), cancellable = true)
+    private void onUseWithItem(ItemStack stack, BlockState state, Level world, BlockPos pos, Player player, InteractionHand hand, BlockHitResult hit, CallbackInfoReturnable<InteractionResult> cir) {
+        BlockState currentState = getCurrentComposterState(world, pos, state);
+        if (currentState == null) {
+            return;
+        }
+        int level = currentState.getValue(LEVEL);
         if (level <= 0) {
             return;
         }
-        boolean shouldKeepVanillaInsert = level < 8 && ITEM_TO_LEVEL_INCREASE_CHANCE.containsKey(stack.getItem());
+        boolean shouldKeepVanillaInsert = level < 8 && COMPOSTABLES.containsKey(stack.getItem());
         if (shouldKeepVanillaInsert) {
             return;
         }
-        if (world.isClient) {
-            cir.setReturnValue(ItemActionResult.success(true));
+        if (isClientLevel(world)) {
+            cir.setReturnValue(InteractionResult.SUCCESS);
             return;
         }
-        Vec3d outputPos = Vec3d.add(pos, 0.5, 0.15, 0.5).addRandom(world.random, 0.25f);
-        ItemEntity boneMeal = new ItemEntity(world, outputPos.getX(), outputPos.getY(), outputPos.getZ(), new ItemStack(Items.BONE_MEAL));
-        boneMeal.setToDefaultPickupDelay();
-        world.spawnEntity(boneMeal);
+        Vec3 outputPos = new Vec3(pos.getX() + 0.5, pos.getY() + 0.15, pos.getZ() + 0.5).offsetRandom(world.getRandom(), 0.25f);
+        ItemEntity boneMeal = new ItemEntity(world, outputPos.x, outputPos.y, outputPos.z, new ItemStack(Items.BONE_MEAL));
+        boneMeal.setDefaultPickUpDelay();
+        world.addFreshEntity(boneMeal);
         int nextLevel = level == 8 ? 6 : level - 1;
-        world.setBlockState(pos, state.with(LEVEL, nextLevel), 3);
-        world.playSound(null, pos, SoundEvents.BLOCK_COMPOSTER_EMPTY, SoundCategory.BLOCKS, 1.0f, 1.0f);
-        cir.setReturnValue(ItemActionResult.success(false));
+        world.setBlock(pos, currentState.setValue(LEVEL, nextLevel), 3);
+        world.playSound(null, pos, SoundEvents.COMPOSTER_EMPTY, SoundSource.BLOCKS, 1.0f, 1.0f);
+        cir.setReturnValue(InteractionResult.CONSUME);
     }
 
-    @Inject(method = "emptyComposter", at = @At("HEAD"), cancellable = true)
-    private static void emptyComposter(Entity user, BlockState state, WorldAccess world, BlockPos pos, CallbackInfoReturnable<BlockState> cir) {
-        int level = state.get(LEVEL);
+    @Inject(method = "extractProduce", at = @At("HEAD"), cancellable = true)
+    private static void emptyComposter(Entity user, BlockState state, Level world, BlockPos pos, CallbackInfoReturnable<BlockState> cir) {
+        int level = state.getValue(LEVEL);
         if (level <= 0) {
             cir.setReturnValue(state);
             return;
@@ -61,54 +68,58 @@ public abstract class CompostMixin {
         cir.setReturnValue(decreaseCompostLevel(user, state, world, pos));
     }
 
-    @Inject(method = "getInventory", at = @At("HEAD"), cancellable = true)
-    private void getInventory(BlockState state, WorldAccess world, BlockPos pos, CallbackInfoReturnable<SidedInventory> cir) {
-        int level = state.get(LEVEL);
+    @Inject(method = "getContainer", at = @At("HEAD"), cancellable = true)
+    private void getInventory(BlockState state, LevelAccessor world, BlockPos pos, CallbackInfoReturnable<WorldlyContainer> cir) {
+        int level = state.getValue(LEVEL);
         if (level > 0) {
             cir.setReturnValue(new LayeredOutputInventory(state, world, pos));
         }
     }
 
-    @Invoker("addToComposter")
-    private static BlockState invokeAddToComposter(Entity user, BlockState state, WorldAccess world, BlockPos pos, ItemStack stack) {
+    @Invoker("addItem")
+    private static BlockState invokeAddToComposter(Entity user, BlockState state, LevelAccessor world, BlockPos pos, ItemStack stack) {
         throw new UnsupportedOperationException();
     }
 
-    private static BlockState decreaseCompostLevel(Entity user, BlockState state, WorldAccess world, BlockPos pos) {
+    private static BlockState decreaseCompostLevel(Entity user, BlockState state, LevelAccessor world, BlockPos pos) {
         BlockState currentState = getCurrentComposterState(world, pos, state);
         if (currentState == null) {
             return state;
         }
-        int currentLevel = currentState.get(LEVEL);
+        int currentLevel = currentState.getValue(LEVEL);
         if (currentLevel <= 0) {
             return currentState;
         }
         int nextLevel = currentLevel == 8 ? 6 : currentLevel - 1;
-        BlockState nextState = currentState.with(LEVEL, nextLevel);
-        world.setBlockState(pos, nextState, 3);
-        world.emitGameEvent(GameEvent.BLOCK_CHANGE, pos, GameEvent.Emitter.of(user, nextState));
+        BlockState nextState = currentState.setValue(LEVEL, nextLevel);
+        world.setBlock(pos, nextState, 3);
+        world.gameEvent(user, GameEvent.BLOCK_CHANGE, pos);
         return nextState;
     }
 
-    private static BlockState getCurrentComposterState(WorldAccess world, BlockPos pos, BlockState fallback) {
+    private static BlockState getCurrentComposterState(LevelAccessor world, BlockPos pos, BlockState fallback) {
         BlockState currentState = world.getBlockState(pos);
-        if (currentState.isOf(fallback.getBlock())) {
+        if (currentState.is(fallback.getBlock())) {
             return currentState;
         }
         return null;
     }
 
-    private static final class LayeredOutputInventory extends SimpleInventory implements SidedInventory {
+    private static boolean isClientLevel(LevelAccessor world) {
+        return world instanceof Level level && level.isClientSide();
+    }
+
+    private static final class LayeredOutputInventory extends SimpleContainer implements WorldlyContainer {
         private static final int[] BOTTOM_SLOT = new int[]{0};
         private static final int[] TOP_SLOT = new int[]{1};
         private static final int[] EMPTY_SLOT = new int[0];
         private final BlockState state;
-        private final WorldAccess world;
+        private final LevelAccessor world;
         private final BlockPos pos;
         private boolean processingInsert;
         private boolean processingExtract;
 
-        private LayeredOutputInventory(BlockState state, WorldAccess world, BlockPos pos) {
+        private LayeredOutputInventory(BlockState state, LevelAccessor world, BlockPos pos) {
             super(new ItemStack(Items.BONE_MEAL), ItemStack.EMPTY);
             this.state = state;
             this.world = world;
@@ -116,12 +127,7 @@ public abstract class CompostMixin {
         }
 
         @Override
-        public int getMaxCountPerStack() {
-            return 1;
-        }
-
-        @Override
-        public int[] getAvailableSlots(Direction side) {
+        public int[] getSlotsForFace(Direction side) {
             if (side == Direction.DOWN) {
                 return BOTTOM_SLOT;
             }
@@ -132,46 +138,46 @@ public abstract class CompostMixin {
         }
 
         @Override
-        public boolean canInsert(int slot, ItemStack stack, Direction dir) {
+        public boolean canPlaceItemThroughFace(int slot, ItemStack stack, Direction dir) {
             BlockState currentState = getCurrentComposterState(this.world, this.pos, this.state);
             return currentState != null
-                    && currentState.get(LEVEL) < 8
+                    && currentState.getValue(LEVEL) < 8
                     && slot == 1
                     && dir == Direction.UP
-                    && this.getStack(1).isEmpty()
-                    && ITEM_TO_LEVEL_INCREASE_CHANCE.containsKey(stack.getItem());
+                    && this.getItem(1).isEmpty()
+                    && COMPOSTABLES.containsKey(stack.getItem());
         }
 
         @Override
-        public boolean canExtract(int slot, ItemStack stack, Direction dir) {
+        public boolean canTakeItemThroughFace(int slot, ItemStack stack, Direction dir) {
             BlockState currentState = getCurrentComposterState(this.world, this.pos, this.state);
             return currentState != null
-                    && currentState.get(LEVEL) > 0
+                    && currentState.getValue(LEVEL) > 0
                     && slot == 0
                     && dir == Direction.DOWN
-                    && !this.getStack(0).isEmpty()
-                    && stack.isOf(Items.BONE_MEAL);
+                    && !this.getItem(0).isEmpty()
+                    && stack.is(Items.BONE_MEAL);
         }
 
         @Override
-        public void markDirty() {
+        public void setChanged() {
             if (this.processingInsert) {
                 return;
             }
-            if (this.world instanceof World world && world.isClient) {
+            if (isClientLevel(this.world)) {
                 return;
             }
             this.processingInsert = true;
             try {
-                ItemStack inputStack = this.getStack(1);
+                ItemStack inputStack = this.getItem(1);
                 if (!inputStack.isEmpty()) {
                     BlockState currentState = getCurrentComposterState(this.world, this.pos, this.state);
                     if (currentState == null) {
                         return;
                     }
                     BlockState after = invokeAddToComposter(null, currentState, this.world, this.pos, inputStack);
-                    this.world.syncWorldEvent(1500, this.pos, after != currentState ? 1 : 0);
-                    this.removeStack(1);
+                    this.world.levelEvent(1500, this.pos, after != currentState ? 1 : 0);
+                    this.removeItemNoUpdate(1);
                 }
             } finally {
                 this.processingInsert = false;
@@ -179,8 +185,8 @@ public abstract class CompostMixin {
         }
 
         @Override
-        public ItemStack removeStack(int slot, int amount) {
-            ItemStack removed = super.removeStack(slot, amount);
+        public ItemStack removeItem(int slot, int amount) {
+            ItemStack removed = super.removeItem(slot, amount);
             if (slot == 0 && !removed.isEmpty()) {
                 this.onBoneMealExtracted();
             }
@@ -188,8 +194,8 @@ public abstract class CompostMixin {
         }
 
         @Override
-        public ItemStack removeStack(int slot) {
-            ItemStack removed = super.removeStack(slot);
+        public ItemStack removeItemNoUpdate(int slot) {
+            ItemStack removed = super.removeItemNoUpdate(slot);
             if (slot == 0 && !removed.isEmpty()) {
                 this.onBoneMealExtracted();
             }
@@ -200,7 +206,7 @@ public abstract class CompostMixin {
             if (this.processingExtract) {
                 return;
             }
-            if (this.world instanceof World world && world.isClient) {
+            if (isClientLevel(this.world)) {
                 return;
             }
             this.processingExtract = true;
@@ -209,7 +215,7 @@ public abstract class CompostMixin {
                 if (currentState == null) {
                     return;
                 }
-                if (currentState.get(LEVEL) > 0) {
+                if (currentState.getValue(LEVEL) > 0) {
                     decreaseCompostLevel(null, currentState, this.world, this.pos);
                 }
             } finally {
